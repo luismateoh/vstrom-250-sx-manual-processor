@@ -5,9 +5,10 @@ Herramienta local para convertir los manuales de la moto (PDFs escaneados en im�
 ## ¿Qué hace?
 
 1. Convierte cada página del PDF en una imagen WebP optimizada.
-2. Extrae el texto de cada página usando OCR (Tesseract).
-3. Genera un `manifest.json` con el texto, metadatos y coordenadas de cada bloque de texto.
-4. Produce una estructura lista para copiar a la PWA.
+2. Extrae el texto de cada página: usa la **capa de texto del PDF** cuando la
+   tiene, y recurre al **OCR (Tesseract)** solo en páginas escaneadas.
+3. Genera un `manifest.json` con el texto, metadatos y coordenadas de cada palabra.
+4. Escribe un `index.json` con todos los manuales, listo para copiar a la PWA.
 
 ## Requisitos
 
@@ -37,13 +38,30 @@ pip install -r requirements.txt
 python -m src.main
 ```
 
-Opcionalmente puedes especificar idioma y calidad:
+Las páginas se procesan en paralelo, una por núcleo disponible.
+
+### Opciones
+
+| Opción | Por defecto | Para qué sirve |
+|---|---|---|
+| `--input` | `input` | Carpeta con los PDFs |
+| `--output` | `output` | Carpeta de salida |
+| `--lang` | `spa+eng` | Idiomas de Tesseract |
+| `--dpi` | `200` | Resolución de render. Subirlo mejora el OCR en escaneos pobres, a costa de tiempo y peso |
+| `--quality` | `85` | Calidad WebP/JPEG |
+| `--fmt` | `webp` | `webp`, `jpeg` o `png` |
+| `--workers` | nº de núcleos | Páginas en paralelo. `1` fuerza el modo secuencial |
+| `--min-conf` | `30` | Confianza mínima del OCR. Las palabras por debajo se descartan por ruido; `0` conserva todo |
+| `--psm` | auto | Page segmentation mode de Tesseract, para páginas con maquetación difícil |
+| `--force` | — | Reprocesa manuales que ya tienen `manifest.json` (por defecto se omiten) |
+| `--force-ocr` | — | Ignora la capa de texto del PDF y usa OCR en todas las páginas |
 
 ```bash
-python -m src.main --lang spa+eng --quality 80 --dpi 200
+python -m src.main --lang spa+eng --dpi 300 --min-conf 40
 ```
 
-3. Los resultados quedan en `output/<nombre-del-pdf>/`:
+3. Los resultados quedan en `output/<id-del-manual>/`, donde el id es el nombre
+   del PDF convertido a slug (`Manual de PARTES 250SX.pdf` -> `manual-de-partes-250sx`):
 
 ```
 output/
@@ -73,9 +91,11 @@ output/
       "blocks": [
         {
           "text": "Bloque de texto",
-          "bbox": { "x": 10, "y": 20, "width": 100, "height": 30 }
+          "bbox": { "x": 10, "y": 20, "width": 100, "height": 30 },
+          "conf": 96
         }
-      ]
+      ],
+      "wordCount": 412
     }
   ]
 }
@@ -83,10 +103,32 @@ output/
 
 ## Copiar a la PWA
 
-Copia la carpeta generada dentro de `vstrom-250-sx/public/manuals/`:
+Copia la carpeta generada dentro de `public/manuals/` de la PWA
+[vstrom-250-sx](https://github.com/luismateoh/vstrom-250-sx):
 
 ```bash
-cp -r output/owner-manual ../vstrom-250-sx/public/manuals/
+cp -r output/* ../vstrom-250-sx/public/manuals/
 ```
 
-La PWA leerá los manifiestos desde esa carpeta.
+La PWA lee `index.json` para listar los manuales y cada `manifest.json` para
+mostrarlos. Ambos los genera el procesador, no hay que editarlos a mano.
+
+## Notas sobre la extracción de texto
+
+- **La capa de texto del PDF manda.** Muchos manuales "escaneados" en realidad
+  traen texto embebido: es exacto (tildes incluidas), conserva las coordenadas
+  por palabra y se lee unas 1000x más rápido que pasar el OCR. El procesador la
+  usa cuando existe y solo cae al OCR en las páginas que no la tienen. Cada
+  manual informa cuántas páginas salieron de cada vía.
+- Si la capa de texto de un PDF está corrupta o mal codificada, `--force-ocr`
+  la ignora por completo.
+
+### Sobre el OCR
+
+- Tesseract corre **una sola vez por página**: `image_to_data` ya devuelve el
+  texto palabra por palabra, así que el texto completo se reconstruye a partir
+  de sus coordenadas en vez de invocar a Tesseract por segunda vez.
+- La imagen se convierte a escala de grises antes del OCR.
+- Las palabras por debajo de `--min-conf` se descartan. Son en su mayoría ruido
+  del escaneo (`17-Inch/(4358cm)lreariwheel` y similares) que ensucia la
+  búsqueda de la PWA. El proceso informa cuántas descartó.
