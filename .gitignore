@@ -6,6 +6,7 @@ venv/
 input/*.pdf
 input/*.PDF
 output/*/
+output/index.json
 !output/.gitkeep
 
 # Python
